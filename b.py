@@ -27,6 +27,7 @@ if not (API_ID and API_HASH and BOT_TOKEN):
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOADS_DIR = BASE_DIR / "downloads"
 SESSION_DIR = BASE_DIR / "session_data"
+COOKIES_FILE = BASE_DIR / "cookies.txt"
 
 # ---------------- Client Setup (Workers 25 | Transmissions 25) ----------------
 app = Client(
@@ -86,7 +87,16 @@ async def start_download(chat_id, url, quality, user_name, user_id):
     final_path = None
     
     try:
-        ydl_opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "socket_timeout": 30}
+        # Optimization: Adding cookie support to bypass bot detection
+        ydl_opts = {
+            "quiet": True, 
+            "no_warnings": True, 
+            "noplaylist": True, 
+            "socket_timeout": 30,
+        }
+        if COOKIES_FILE.exists():
+            ydl_opts["cookiefile"] = str(COOKIES_FILE)
+
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             vid_width, vid_height = info.get("width") or 1280, info.get("height") or 720
@@ -120,12 +130,15 @@ async def start_download(chat_id, url, quality, user_name, user_id):
         aria_exists = shutil.which("aria2c")
         ret_code = -1
         
+        # Adding cookie flag to subprocess commands
+        cookie_arg = ["--cookies", str(COOKIES_FILE)] if COOKIES_FILE.exists() else []
+
         if aria_exists:
-            cmd_turbo = ["yt-dlp", "--external-downloader", "aria2c", "--external-downloader-args", "-x 16 -s 16 -k 1M", "--force-ipv4", "-f", fmt, "--merge-output-format", "mp4", "-o", str(base_path) + ".%(ext)s", url]
+            cmd_turbo = ["yt-dlp"] + cookie_arg + ["--external-downloader", "aria2c", "--external-downloader-args", "-x 16 -s 16 -k 1M", "--force-ipv4", "-f", fmt, "--merge-output-format", "mp4", "-o", str(base_path) + ".%(ext)s", url]
             ret_code = await run_subprocess_with_progress(cmd_turbo, dl_progress)
         
         if ret_code != 0:
-            cmd_safe = ["yt-dlp", "--extractor-args", "youtube:player_client=android", "--hls-prefer-native", "--force-ipv4", "-f", fmt, "--merge-output-format", "mp4", "-o", str(base_path) + ".%(ext)s", url]
+            cmd_safe = ["yt-dlp"] + cookie_arg + ["--extractor-args", "youtube:player_client=android", "--hls-prefer-native", "--force-ipv4", "-f", fmt, "--merge-output-format", "mp4", "-o", str(base_path) + ".%(ext)s", url]
             await run_subprocess_with_progress(cmd_safe, dl_progress)
 
         possible_files = [f for f in glob.glob(str(base_path) + ".*") if Path(f).suffix in {".mp4", ".mkv", ".webm"}]
@@ -224,16 +237,14 @@ async def cb_handler(_, query):
 # ---------------- Main Block (System Cleanup) ----------------
 if __name__ == "__main__":
     if SESSION_DIR.exists():
-        print("🧹 Cleaning up old session data...")
-        shutil.rmtree(str(SESSION_DIR))
+        shutil.rmtree(str(SESSION_DIR), ignore_errors=True)
     SESSION_DIR.mkdir(exist_ok=True)
     DOWNLOADS_DIR.mkdir(exist_ok=True)
 
-    print("🧹 Cleaning up downloads folder...")
     for item in glob.glob(str(DOWNLOADS_DIR / "*")):
         try:
             if os.path.isfile(item): os.remove(item)
-            else: shutil.rmtree(item)
+            else: shutil.rmtree(item, ignore_errors=True)
         except: pass
     
     print("💎 DEVU FINAL STABLE BOT STARTING...")
